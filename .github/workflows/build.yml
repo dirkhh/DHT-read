@@ -1,0 +1,94 @@
+# Original: https://github.com/guysoft/OctoPi-Klipper-CustomPiOS/blob/6a88c12f562be4668e26fe89a445e761be1481ac/LICENSE
+# License: GPL-3.0
+name: build binary
+
+on:
+  push:
+    branches:
+    - "build-*"
+    tags:
+    - "v*"
+
+jobs:
+  # first, prepare the sources by moving the 'latest' tag to the current SHA
+  prepare:
+    runs-on: ubuntu-24.04
+    steps:
+    # check the sources out in the 'expected place' for the following step that tags them
+    - name: Checkout Project Repository
+      uses: actions/checkout@v4
+      with:
+        show-progress: false
+    - name: tag current version as latest (regardless of other tags)
+      uses: rickstaa/action-create-tag@v1
+      with:
+        tag: "latest"
+        tag_exists_error: false
+        force_push_tag: true
+        message: "latest commit"
+  # next run all the board builds
+  build:
+    needs: prepare
+    runs-on: ubuntu-24.04-arm64
+    steps:
+    - name: Checkout Project Repository again with the new tag - and make sure we have the full history for the version code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        show-progress: false
+        path: repository
+
+    - name: Install Dependencies
+      run: |
+        sudo apt update
+        sudo apt-get install -y gcc libgpiod-dev p7zip-full
+
+    - name: create a reasonable tag for this run - either a short sha or the tag we were called with
+      id: tag
+      run: |
+        export tag=""
+        export is_release="test"
+        if [ "${{ github.ref_type }}" = "tag" ] ; then tag="${{ github.ref_name }}" ; else tag="${{ github.sha }}" ; fi
+        if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] ; then is_release="release" ; fi
+        if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-beta ]] ; then is_release="beta" ; fi
+        export better_tag=$(echo $tag | sed -r 's/^(.{8}).{32}$/g-\1/')
+        echo "tag=${better_tag}" >> $GITHUB_OUTPUT
+        echo "is_release=${is_release}" >> $GITHUB_OUTPUT
+
+    - name: Build Image
+      id: build
+      run: |
+        cd repository
+        gcc --static -o dht src/main.c src/DHT.c -Iinclude -lgpiod
+
+
+    - name: Upload to GitHub as release
+      uses: softprops/action-gh-release@v2
+      if: ${{ steps.tag.outputs.is_release == 'release' }}
+      with:
+        token: ${{ secrets.PAT_GITHUB_TOKEN }}
+        generate_release_notes: true
+        body_path: repository/release-notes.md
+        files: repository/dht
+
+
+    - name: Upload to GitHub as beta release
+      uses: softprops/action-gh-release@v2
+      if: ${{ steps.tag.outputs.is_release == 'beta' }}
+      with:
+        token: ${{ secrets.PAT_GITHUB_TOKEN }}
+        generate_release_notes: true
+        body_path: repository/release-notes.md
+        prerelease: true
+        files: repository/dht
+
+    - name: Upload non-release artifacts
+      uses: softprops/action-gh-release@v2
+      if: ${{ steps.tag.outputs.is_release == 'test' }}
+      with:
+        token: ${{ secrets.PAT_GITHUB_TOKEN }}
+        generate_release_notes: true
+        prerelease: true
+        tag_name: latest
+        name: testbuild-${{ steps.tag.outputs.tag }}
+        files: repository/dht
