@@ -19,6 +19,7 @@ jobs:
       uses: actions/checkout@v4
       with:
         show-progress: false
+        fetch-depth: 0
     - name: tag current version as latest (regardless of other tags)
       uses: rickstaa/action-create-tag@v1
       with:
@@ -29,7 +30,7 @@ jobs:
   # next run all the board builds
   build:
     needs: prepare
-    runs-on: ubuntu-24.04-arm64
+    runs-on: ubuntu-24.04-arm
     steps:
     - name: Checkout Project Repository again with the new tag - and make sure we have the full history for the version code
       uses: actions/checkout@v4
