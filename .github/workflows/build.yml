@@ -47,7 +47,6 @@ jobs:
       uses: softprops/action-gh-release@v2
       if: ${{ steps.tag.outputs.is_release == 'release' }}
       with:
-        token: ${{ secrets.PAT_GITHUB_TOKEN }}
         generate_release_notes: true
         body_path: release-notes.md
         files: dht
@@ -57,7 +56,6 @@ jobs:
       uses: softprops/action-gh-release@v2
       if: ${{ steps.tag.outputs.is_release == 'beta' }}
       with:
-        token: ${{ secrets.PAT_GITHUB_TOKEN }}
         generate_release_notes: true
         body_path: release-notes.md
         prerelease: true
