@@ -40,7 +40,6 @@ jobs:
     - name: Build Image
       id: build
       run: |
-        cd repository
         gcc --static -o dht src/main.c src/DHT.c -Iinclude -lgpiod
 
 
@@ -50,8 +49,8 @@ jobs:
       with:
         token: ${{ secrets.PAT_GITHUB_TOKEN }}
         generate_release_notes: true
-        body_path: repository/release-notes.md
-        files: repository/dht
+        body_path: release-notes.md
+        files: dht
 
 
     - name: Upload to GitHub as beta release
@@ -60,7 +59,7 @@ jobs:
       with:
         token: ${{ secrets.PAT_GITHUB_TOKEN }}
         generate_release_notes: true
-        body_path: repository/release-notes.md
+        body_path: release-notes.md
         prerelease: true
-        files: repository/dht
+        files: dht
 
