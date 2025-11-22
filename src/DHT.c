@@ -189,8 +189,11 @@ bool DHT_decode_data(DHT* sensor, const int* rawData, size_t rawDataLen, float* 
     // DHT22 has temperature in tenths of degrees in data[2-3] and humidity in tenths of percent in data[0-1]
     // the logic to check here is really crude... I assume that the humidity anywhere is at least 4%, and it's
     // obviously at most 100% - if we have two byte values (DHT22) that means the most significant byte is at
-    // most 3 (0x03E8 == 1000 which corresponds to 100%) - so larger values than that imply a DHT22
+    // most 3 (0x03E8 == 1000 which corresponds to 100%) - so larger values than that imply a DHT11
+    // the most significant bit for temperature indicates the sign - so let's handle that separately
     float h, t;
+    float sign = data[2] & 0x80 ? -1.0 : +1.0;
+    data[2] = data[2] & 0x7f;
     if (data[0] < 4) {
         h = ((float)((data[0] << 8) | data[1])) / 10.0f;
         t = ((float)((data[2] << 8) | data[3])) / 10.0f;
@@ -201,7 +204,7 @@ bool DHT_decode_data(DHT* sensor, const int* rawData, size_t rawDataLen, float* 
     if (humidity)
         *humidity = h;
     if (temperature)
-        *temperature = t;
+        *temperature = t * sign;
     return true;
 }
 
