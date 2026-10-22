@@ -82,11 +82,11 @@ bool DHT_read_data(DHT* sensor, int* rawData, size_t rawDataLen) {
     gpiod_line_set_value(sensor->line, 1);
     usleep(30);
 
-    gpiod_line_release(sensor->line);
-
-    config.request_type = GPIOD_LINE_REQUEST_DIRECTION_INPUT;
-    if (gpiod_line_request(sensor->line, &config, 0) < 0) {
-        fprintf(stderr, "[ERROR] Failed to request GPIO line as input\n");
+    // switch the already requested line to input - one syscall instead of releasing and
+    // re-requesting the line, so we start sampling sooner and with less jitter
+    if (gpiod_line_set_direction_input(sensor->line) < 0) {
+        fprintf(stderr, "[ERROR] Failed to switch GPIO line to input\n");
+        gpiod_line_release(sensor->line);
         return false;
     }
 
@@ -107,26 +107,34 @@ bool DHT_read_data(DHT* sensor, int* rawData, size_t rawDataLen) {
     return true;
 }
 
-// the data format specifies that each bit is sent with a 50us low voltage level,
+// the data format specifies that the sensor answers the start signal with an 80us low and an
+// 80us high level, followed by 40 bits. Each bit is sent with a 50us low voltage level,
 // followed by a high voltage level that determines the bit value:
 //    26-28us indicates a 0 bit
 //     ~70us  indicates a 1 bit
 // because we read as fast as we can instead of trying to time our reads, we need to
-// analyze the data. We look at the series of 0 (low) values that we have in the data
-// stream and determine the shortest and longest of those and use the average of that
-// for the threshold
-// when counting the 1 (high) values we simply assume that fewer than threshold implies
-// a 0 bit and more than threshold a 1 bit. This is of course brutally coarse but in my
-// testing the values weren't nearly as stable as I would have preferred (because really,
-// looking at the specs you'd say 50% of threshold for 0 and 150% of threshold for 1).
-// thankfully the data has a simplistic checksum, so we can try again if we mis-decode things.
+// analyze the data. We split the samples into runs of identical values and remember the
+// length of each high run together with the length of the low run that preceded it.
+// Where in that stream our sampling starts depends on how quickly the system could switch
+// the pin to input, so we can't rely on seeing the response signal - the first (partial) run
+// is dropped and then the 40 bits are simply the last 40 high runs (anything before that is
+// the response signal). The sensor releases the line after the last bit, so there are no
+// more edges after that.
+// The low runs of the 40 bits (all nominally 50us) tell us how many samples are 50us, so
+// the average of the shortest and longest of those is the threshold: a high run with fewer
+// than threshold samples implies a 0 bit and more than threshold a 1 bit. This is of course
+// brutally coarse but in my testing the values weren't nearly as stable as I would have
+// preferred (because really, looking at the specs you'd say 50% of threshold for 0 and 150%
+// of threshold for 1). thankfully the data has a simplistic checksum, so we can try again
+// if we mis-decode things.
+#define MAX_RUNS 64
 bool DHT_decode_data(DHT* sensor, const int* rawData, size_t rawDataLen, float* humidity, float* temperature) {
     int lastData = rawData[0];
     int lastidx = -1;
-    int low = rawDataLen;
-    int high = 0;
-    int bits[40];
-    int bit = 0;
+    int highs[MAX_RUNS]; // length of each high run (in samples)
+    int lows[MAX_RUNS];  // length of the low run before it (-1 if we didn't see all of it)
+    int nhigh = 0;
+    int prevLow = -1;
     bool seen_first_edge = false;
     if (sensor && sensor->debugMode)
         fprintf(stderr, "Raw Data(%zu)=\n", rawDataLen);
@@ -138,24 +146,41 @@ bool DHT_decode_data(DHT* sensor, const int* rawData, size_t rawDataLen, float* 
             if (sensor && sensor->debugMode)
                 fprintf(stderr, "   %d\n", l);
             if (seen_first_edge) {
-                if (lastData == 0) { // if this was low values we include it in the threshold calculation
-                    low = l < low ? l : low;
-                    high = l > high ? l : high;
-                } else { // if these were high values, we store the number to later calculate the bit value
-                    bits[bit] = l;
-                    bit++;
-                    if (bit > 39)
-                        break;
+                if (lastData == 0) {
+                    prevLow = l;
+                } else {
+                    if (nhigh == MAX_RUNS) { // keep only the most recent runs
+                        memmove(highs, highs + 1, (MAX_RUNS - 1) * sizeof(int));
+                        memmove(lows, lows + 1, (MAX_RUNS - 1) * sizeof(int));
+                        nhigh--;
+                    }
+                    highs[nhigh] = l;
+                    lows[nhigh] = prevLow;
+                    nhigh++;
                 }
             } else {
-                seen_first_edge = true;
+                seen_first_edge = true; // the first run is most likely incomplete
             }
             lastidx = i;
             lastData = rawData[i];
         }
     }
-    if (bit < 40) {
-        fprintf(stderr, "[ERROR] only detected %d bits, giving up\n", bit);
+    if (nhigh < 40) {
+        fprintf(stderr, "[ERROR] only detected %d bits, giving up\n", nhigh);
+        return false;
+    }
+    const int* bits = highs + (nhigh - 40);
+    const int* bitlows = lows + (nhigh - 40);
+    int low = rawDataLen;
+    int high = 0;
+    for (int i = 0; i < 40; ++i) {
+        if (bitlows[i] < 0)
+            continue;
+        low = bitlows[i] < low ? bitlows[i] : low;
+        high = bitlows[i] > high ? bitlows[i] : high;
+    }
+    if (high == 0) {
+        fprintf(stderr, "[ERROR] no usable reference low levels, giving up\n");
         return false;
     }
     int threshold = (low + high) / 2;
