@@ -6,7 +6,7 @@ Reading temperature and humidity data from a DHT22 (or DHT11 - but those aren't 
 
 I wrote this in C to make sure we have the minimal number of dependencies - this also makes it straight forward to create a static binary for the little application.
 
-I developed and tested the code on Raspberry Pi4 and Pi5 boards but see no reason why it wouldn't work on others Single Board Computers.
+I developed and tested the code on Raspberry Pi4 and Pi5 boards, and it was now able to also test it on a Raspberry Pi3b (where it usually needs a few more rounds to get a valid reading). I see no reason why it wouldn't work on the Pi3a or the Pi Zero2, but currently cannot test that. The binary is built for 64bit ARM only since we don't ship any 32bit versions of the ADS-B Feeder Image.
 
 The code is a rather crude implementation of the logic described in the DHT11 and DHT22 datasheets
 https://components101.com/sites/default/files/component_datasheet/DFR0067%20DHT11%20Datasheet.pdf
